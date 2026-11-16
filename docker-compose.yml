@@ -1,0 +1,98 @@
+services:
+  # ============================================================================
+  # 1. DATABASE: PostgreSQL 16 (Relational Primary Store)
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: phoenix_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: phoenix_user
+      POSTGRES_PASSWORD: phoenix_secure_pass_2026
+      POSTGRES_DB: phoenix_portal
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - phoenix_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U phoenix_user -d phoenix_portal"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # 2. CACHE & SESSION STORE: Redis 7 (In-Memory Accelerator)
+  # ============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: phoenix_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - phoenix_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================================
+  # 3. BACKEND API: FastAPI ASGI Application Server
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: phoenix_backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://phoenix_user:phoenix_secure_pass_2026@postgres:5432/phoenix_portal
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=drdo-classified-phoenix-portal-jwt-secret-key-super-secure-2026
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - SESSION_EXPIRE_SECONDS=1800
+      - CACHE_DEFAULT_TTL=300
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - phoenix_network
+    ports:
+      - "8000:8000"
+
+  # ============================================================================
+  # 4. REVERSE PROXY & GATEWAY: NGINX (SSL Termination, Rate Limiting, CSP)
+  # ============================================================================
+  nginx:
+    image: nginx:alpine
+    container_name: phoenix_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - app
+    networks:
+      - phoenix_network
+
+networks:
+  phoenix_network:
+    name: phoenix_network
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: phoenix_postgres_data
+  redis_data:
+    name: phoenix_redis_data
